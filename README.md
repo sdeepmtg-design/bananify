@@ -9,6 +9,13 @@ Telegram-бот для генерации изображений через Open
 - Отправка картинки пользователю в Telegram
 - Готовый `render.yaml` для деплоя на Render
 - Секреты через Environment Variables
+- Понятная обработка ошибок OpenRouter:
+  - недостаточно credits
+  - запрещённый prompt / `PROHIBITED_CONTENT`
+  - rate limit
+  - ошибки API-ключа
+  - временные ошибки провайдера
+- Проверка слишком длинных и пустых сообщений
 
 ## Переменные окружения
 
@@ -19,7 +26,18 @@ TELEGRAM_TOKEN=твой_telegram_bot_token
 OPENROUTER_API_KEY=твой_openrouter_key
 WEBHOOK_SECRET=любой_длинный_секрет
 OPENROUTER_IMAGE_MODEL=google/gemini-3-pro-image
+DEFAULT_ASPECT_RATIO=1:1
+DEFAULT_RESOLUTION=1K
+MAX_PROMPT_LENGTH=1500
 ```
+
+Обязательные переменные:
+
+- `TELEGRAM_TOKEN`
+- `OPENROUTER_API_KEY`
+- `WEBHOOK_SECRET`
+
+Остальные можно не менять.
 
 ## Локальный запуск
 
@@ -41,7 +59,20 @@ uvicorn main:app --reload
    - `OPENROUTER_API_KEY`
    - `WEBHOOK_SECRET`
    - `OPENROUTER_IMAGE_MODEL`
+   - `DEFAULT_ASPECT_RATIO`
+   - `DEFAULT_RESOLUTION`
+   - `MAX_PROMPT_LENGTH`
 6. Нажми Deploy.
+
+Если создаёшь обычный **Web Service** вручную:
+
+```bash
+# Build Command
+pip install -r requirements.txt
+
+# Start Command
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
 
 ## Установка webhook
 
@@ -68,6 +99,15 @@ https://api.telegram.org/botTELEGRAM_TOKEN/setWebhook?url=https://your-app-name.
 ```text
 https://api.telegram.org/botTELEGRAM_TOKEN/getWebhookInfo
 ```
+
+## Команды бота
+
+```text
+/start — приветствие
+/help — инструкция и пример prompt
+```
+
+Для генерации картинки просто отправь текстовое описание.
 
 ## Важно
 
