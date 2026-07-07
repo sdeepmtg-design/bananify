@@ -36,23 +36,22 @@ def _data_url(image_bytes: bytes, media_type: str = "image/jpeg") -> str:
     return f"data:{media_type};base64,{encoded}"
 
 
-def generate_images(
+def _request_single_image(
     api_key: str,
     prompt: str,
     model: str,
-    aspect_ratio: str = "1:1",
-    resolution: str = "1K",
-    n: int = 1,
-    reference_image: bytes | None = None,
-    reference_media_type: str = "image/jpeg",
+    aspect_ratio: str,
+    resolution: str,
+    reference_image: bytes | None,
+    reference_media_type: str,
 ) -> ImageGenerationResult:
-    if not api_key:
-        raise OpenRouterError(None, "OPENROUTER_API_KEY is missing", "missing_api_key")
-
     payload: dict[str, Any] = {
         "model": model,
         "prompt": prompt,
-        "n": max(1, min(int(n), 4)),
+        # Nano Banana Pro через OpenRouter принимает только n=1.
+        # Если пользователю нужно несколько изображений, generate_images()
+        # ниже делает несколько отдельных запросов по одному изображению.
+        "n": 1,
         "aspect_ratio": aspect_ratio,
         "resolution": resolution,
     }
@@ -98,6 +97,41 @@ def generate_images(
 
     return ImageGenerationResult(images=images, cost=float(usage.get("cost") or 0), raw_usage=usage)
 
+
+def generate_images(
+    api_key: str,
+    prompt: str,
+    model: str,
+    aspect_ratio: str = "1:1",
+    resolution: str = "1K",
+    n: int = 1,
+    reference_image: bytes | None = None,
+    reference_media_type: str = "image/jpeg",
+) -> ImageGenerationResult:
+    if not api_key:
+        raise OpenRouterError(None, "OPENROUTER_API_KEY is missing", "missing_api_key")
+
+    requested_count = max(1, min(int(n), 4))
+    all_images: list[bytes] = []
+    total_cost = 0.0
+    usages: list[dict[str, Any]] = []
+
+    for _ in range(requested_count):
+        result = _request_single_image(
+            api_key=api_key,
+            prompt=prompt,
+            model=model,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            reference_image=reference_image,
+            reference_media_type=reference_media_type,
+        )
+        all_images.extend(result.images)
+        total_cost += result.cost
+        if result.raw_usage:
+            usages.append(result.raw_usage)
+
+    return ImageGenerationResult(images=all_images, cost=total_cost, raw_usage={"requests": usages})
 
 def user_friendly_error(error: Exception) -> tuple[str, str]:
     text = str(error)
