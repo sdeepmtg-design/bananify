@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass
-from typing import set
+from typing import Set
 
 
 def _parse_admin_ids(value: str | None) -> set[int]:
