@@ -1,7 +1,5 @@
 import os
 from dataclasses import dataclass
-from typing import Set
-
 
 def _parse_admin_ids(value: str | None) -> set[int]:
     if not value:

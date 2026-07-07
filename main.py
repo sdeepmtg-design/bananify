@@ -122,17 +122,17 @@ async def handle_callback(callback: dict[str, Any]) -> None:
             await asyncio.to_thread(send_message, settings.telegram_token, chat_id, examples_text())
         elif data == "menu:help":
             await asyncio.to_thread(send_message, settings.telegram_token, chat_id, help_text())
-        elif data == "settings:aspect":
+        elif data in {"settings:aspect", "settings:format", "menu:aspect", "menu:format"}:
             await asyncio.to_thread(
-                edit_message_text,
+                send_message,
                 settings.telegram_token,
                 chat_id,
                 "📐 Выбери формат изображения:",
                 aspect_keyboard(user_settings["aspect_ratio"]),
             )
-        elif data == "settings:n":
+        elif data in {"settings:n", "settings:count", "menu:n", "menu:count"}:
             await asyncio.to_thread(
-                edit_message_text,
+                send_message,
                 settings.telegram_token,
                 chat_id,
                 "🔢 Сколько изображений генерировать за один запрос?",
@@ -141,21 +141,23 @@ async def handle_callback(callback: dict[str, Any]) -> None:
         elif data.startswith("aspect:"):
             aspect = data.split(":", 1)[1]
             set_aspect_ratio(user_id, aspect)
+            updated_settings = get_user_settings(user_id)
             await asyncio.to_thread(
-                edit_message_text,
+                send_message,
                 settings.telegram_token,
                 chat_id,
-                f"✅ Формат установлен: {aspect}",
+                f"✅ Формат установлен: {aspect}\n\n" + start_text(updated_settings),
                 main_menu_keyboard(),
             )
         elif data.startswith("n:"):
             count = int(data.split(":", 1)[1])
             set_image_count(user_id, count)
+            updated_settings = get_user_settings(user_id)
             await asyncio.to_thread(
-                edit_message_text,
+                send_message,
                 settings.telegram_token,
                 chat_id,
-                f"✅ Количество изображений: {count}",
+                f"✅ Количество изображений: {count}\n\n" + start_text(updated_settings),
                 main_menu_keyboard(),
             )
     except Exception:
