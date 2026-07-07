@@ -11,12 +11,14 @@ class CreditPackage:
 
 
 # Telegram Stars amounts are integer XTR units.
-# 1 credit = 1 generated/edited image in the default pricing model.
 PACKAGES: dict[str, CreditPackage] = {
-    "start": CreditPackage("start", "🟢 Start — 10 кредитов", 10, 300, "10 AI-кредитов для генерации или редактирования изображений"),
-    "plus": CreditPackage("plus", "🔥 Plus — 50 кредитов", 50, 1350, "50 AI-кредитов. Самый удобный пакет для регулярного использования"),
-    "pro": CreditPackage("pro", "💎 PRO — 100 кредитов", 100, 2500, "100 AI-кредитов для активных пользователей"),
+    "pack_10": CreditPackage("pack_10", "🟢 Start — 10 AI-кредитов", 10, 300, "Пакет Start: 10 AI-кредитов"),
+    "pack_50": CreditPackage("pack_50", "🔥 Plus — 50 AI-кредитов", 50, 1350, "Пакет Plus: 50 AI-кредитов"),
+    "pack_100": CreditPackage("pack_100", "💎 PRO — 100 AI-кредитов", 100, 2500, "Пакет PRO: 100 AI-кредитов"),
 }
+
+# Backward compatibility for old callback data if a user clicks an older message.
+PACKAGES["pack_30"] = PACKAGES["pack_50"]
 
 
 def get_package(package_id: str) -> CreditPackage | None:
