@@ -8,15 +8,20 @@ from fastapi import FastAPI, Request, HTTPException
 from core.config import settings
 from database.store import (
     admin_stats,
+    consume_generation_credits,
     get_user_settings,
     init_db,
     log_generation,
+    record_payment,
+    refund_generation_credits,
     set_aspect_ratio,
     set_image_count,
     set_last_prompt,
     touch_user,
+    user_balance_text,
 )
-from keyboards.inline import aspect_keyboard, count_keyboard, main_menu_keyboard
+from keyboards.inline import aspect_keyboard, buy_keyboard, count_keyboard, main_menu_keyboard
+from payments import get_package
 from services.openrouter import generate_images, user_friendly_error
 from services.telegram import (
     answer_callback,
@@ -26,6 +31,8 @@ from services.telegram import (
     send_chat_action,
     send_message,
     send_photo,
+    send_invoice,
+    answer_pre_checkout_query,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +76,10 @@ async def telegram_webhook(secret: str, request: Request):
 
     if callback_query := update.get("callback_query"):
         asyncio.create_task(handle_callback(callback_query))
+        return {"ok": True}
+
+    if pre_checkout_query := update.get("pre_checkout_query"):
+        asyncio.create_task(handle_pre_checkout_query(pre_checkout_query))
         return {"ok": True}
 
     message = update.get("message") or update.get("edited_message")
@@ -122,6 +133,25 @@ async def handle_callback(callback: dict[str, Any]) -> None:
             await asyncio.to_thread(send_message, settings.telegram_token, chat_id, examples_text())
         elif data == "menu:help":
             await asyncio.to_thread(send_message, settings.telegram_token, chat_id, help_text())
+        elif data == "menu:profile":
+            await asyncio.to_thread(send_message, settings.telegram_token, chat_id, user_balance_text(user_id), main_menu_keyboard())
+        elif data == "menu:buy":
+            await asyncio.to_thread(send_message, settings.telegram_token, chat_id, buy_text(), buy_keyboard())
+        elif data.startswith("buy:"):
+            package_id = data.split(":", 1)[1]
+            package = get_package(package_id)
+            if not package:
+                await asyncio.to_thread(send_message, settings.telegram_token, chat_id, "⚠️ Пакет не найден.")
+                return
+            await asyncio.to_thread(
+                send_invoice,
+                settings.telegram_token,
+                chat_id,
+                package.title,
+                package.description,
+                f"credits:{package.package_id}",
+                package.stars,
+            )
         elif data in {"settings:aspect", "settings:format", "menu:aspect", "menu:format"}:
             await asyncio.to_thread(
                 send_message,
@@ -188,8 +218,24 @@ async def handle_message(message: dict[str, Any]) -> None:
         await asyncio.to_thread(send_message, settings.telegram_token, chat_id, examples_text())
         return
 
+    if text.startswith("/balance") or text.startswith("/profile"):
+        await asyncio.to_thread(send_message, settings.telegram_token, chat_id, user_balance_text(user_id), main_menu_keyboard())
+        return
+
+    if text.startswith("/buy"):
+        await asyncio.to_thread(send_message, settings.telegram_token, chat_id, buy_text(), buy_keyboard())
+        return
+
+    if text.startswith("/paysupport"):
+        await asyncio.to_thread(send_message, settings.telegram_token, chat_id, pay_support_text())
+        return
+
     if text.startswith("/admin_stats"):
         await handle_admin_stats(chat_id, user_id)
+        return
+
+    if successful_payment := message.get("successful_payment"):
+        await handle_successful_payment(chat_id, user_id, successful_payment)
         return
 
     if not text and photos:
@@ -241,6 +287,11 @@ async def process_generation(chat_id: int, user_id: int, prompt: str, reference_
     image_count = int(user_settings["image_count"])
     set_last_prompt(user_id, prompt)
 
+    ok, charge_type, balance_message = consume_generation_credits(user_id, image_count)
+    if not ok:
+        await asyncio.to_thread(send_message, settings.telegram_token, chat_id, balance_message, buy_keyboard())
+        return
+
     await asyncio.to_thread(
         send_message,
         settings.telegram_token,
@@ -290,7 +341,46 @@ async def process_generation(chat_id: int, user_id: int, prompt: str, reference_
                 duration_ms=duration_ms,
                 error_code=error_code,
             )
+            refund_generation_credits(user_id, image_count, charge_type)
             await asyncio.to_thread(send_message, settings.telegram_token, chat_id, message)
+
+
+async def handle_pre_checkout_query(query: dict[str, Any]) -> None:
+    query_id = query.get("id")
+    payload = query.get("invoice_payload", "")
+    ok = payload.startswith("credits:") and get_package(payload.split(":", 1)[1]) is not None
+    await asyncio.to_thread(
+        answer_pre_checkout_query,
+        settings.telegram_token,
+        query_id,
+        ok,
+        None if ok else "Пакет не найден. Попробуйте выбрать пакет заново.",
+    )
+
+
+async def handle_successful_payment(chat_id: int, user_id: int, payment: dict[str, Any]) -> None:
+    payload = payment.get("invoice_payload", "")
+    package_id = payload.split(":", 1)[1] if payload.startswith("credits:") else ""
+    package = get_package(package_id)
+    if not package:
+        await asyncio.to_thread(send_message, settings.telegram_token, chat_id, "⚠️ Оплата прошла, но пакет не найден. Напишите в поддержку: /paysupport")
+        return
+
+    record_payment(
+        user_id=user_id,
+        package_id=package.package_id,
+        credits=package.credits,
+        stars=package.stars,
+        telegram_payment_charge_id=payment.get("telegram_payment_charge_id"),
+        provider_payment_charge_id=payment.get("provider_payment_charge_id"),
+    )
+    await asyncio.to_thread(
+        send_message,
+        settings.telegram_token,
+        chat_id,
+        f"✅ Оплата прошла!\nНачислено: {package.credits} изображений.\n\n" + user_balance_text(user_id),
+        main_menu_keyboard(),
+    )
 
 
 async def handle_admin_stats(chat_id: int, user_id: int) -> None:
@@ -307,7 +397,11 @@ async def handle_admin_stats(chat_id: int, user_id: int) -> None:
         f"🖼 Успешных генераций: {stats['total_generations']}\n"
         f"📅 Генераций за 24ч: {stats['today_generations']}\n"
         f"⚠️ Ошибок: {stats['failed_generations']}\n"
-        f"💰 Примерная стоимость: ${stats['total_cost']:.4f}\n"
+        f"💰 Примерная стоимость API: ${stats['total_cost']:.4f}\n"
+        f"🎁 Использовали бесплатную генерацию: {stats['free_used']}\n"
+        f"👥 Покупателей: {stats['buyers']}\n"
+        f"⭐ Получено Stars: {stats['total_stars']}\n"
+        f"💎 Продано изображений: {stats['total_paid_credits']}\n"
         f"⏱ Среднее время: {stats['avg_ms'] // 1000} сек.\n\n"
         f"Последние ошибки:\n{error_text}"
     )
@@ -315,10 +409,12 @@ async def handle_admin_stats(chat_id: int, user_id: int) -> None:
 
 
 def start_text(user_settings: dict[str, Any]) -> str:
+    free_line = "доступна" if not int(user_settings.get("free_used") or 0) else "использована"
     return (
         "🍌 Привет! Я создаю изображения через Nano Banana Pro.\n\n"
+        "🎁 Новым пользователям доступна 1 бесплатная генерация. После этого можно купить пакет изображений за Telegram Stars.\n\n"
         "Просто напиши, что нужно нарисовать. Также можешь отправить фото с подписью — я попробую его отредактировать.\n\n"
-        f"Текущие настройки:\n📐 Формат: {user_settings['aspect_ratio']}\n🔢 Количество: {user_settings['image_count']}"
+        f"Текущие настройки:\n📐 Формат: {user_settings['aspect_ratio']}\n🔢 Количество: {user_settings['image_count']}\n🎁 Бесплатная: {free_line}\n💎 Баланс: {int(user_settings.get('credits') or 0)}"
     )
 
 
@@ -328,7 +424,7 @@ def help_text() -> str:
         "1. Напиши описание картинки — бот создаст изображение.\n"
         "2. Отправь фото с подписью — бот попробует отредактировать фото по описанию.\n"
         "3. Через кнопки можно выбрать формат и количество изображений.\n\n"
-        "Команды:\n/start — главное меню\n/help — помощь\n/examples — примеры\n/admin_stats — статистика только для админа"
+        "Команды:\n/start — главное меню\n/help — помощь\n/examples — примеры\n/balance — баланс\n/buy — купить изображения\n/paysupport — поддержка платежей"
     )
 
 
@@ -341,4 +437,20 @@ def examples_text() -> str:
         "• Персонаж для игры: маленький робот-садовник, 3D icon\n"
         "• Обложка трека в стиле synthwave, яркие цвета\n\n"
         "Для фото: отправь изображение с подписью вроде «сделай в стиле Pixar» или «замени фон на пляж»."
+    )
+
+
+def buy_text() -> str:
+    return (
+        "💳 Купить изображения\n\n"
+        "1 изображение = 1 кредит. Если выбрано 4 изображения, спишется 4 кредита.\n\n"
+        "Выбери пакет:"
+    )
+
+
+def pay_support_text() -> str:
+    return (
+        "🧾 Поддержка платежей\n\n"
+        "Если оплата прошла, но изображения не начислились, напишите администратору и приложите скрин оплаты.\n"
+        "Команда /balance показывает текущий баланс."
     )

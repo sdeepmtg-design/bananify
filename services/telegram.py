@@ -58,3 +58,24 @@ def download_file(token: str, file_path: str) -> bytes:
     response = requests.get(f"https://api.telegram.org/file/bot{token}/{file_path}", timeout=60)
     response.raise_for_status()
     return response.content
+
+
+def send_invoice(token: str, chat_id: int, title: str, description: str, payload: str, stars: int):
+    # Для Telegram Stars используется currency=XTR и пустой provider_token.
+    invoice_payload = {
+        "chat_id": chat_id,
+        "title": title,
+        "description": description,
+        "payload": payload,
+        "provider_token": "",
+        "currency": "XTR",
+        "prices": [{"label": title, "amount": int(stars)}],
+    }
+    return api_call(token, "sendInvoice", invoice_payload)
+
+
+def answer_pre_checkout_query(token: str, pre_checkout_query_id: str, ok: bool = True, error_message: str | None = None):
+    payload = {"pre_checkout_query_id": pre_checkout_query_id, "ok": ok}
+    if error_message:
+        payload["error_message"] = error_message
+    return api_call(token, "answerPreCheckoutQuery", payload)
