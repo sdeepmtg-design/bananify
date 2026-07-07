@@ -11,12 +11,14 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: WEBHOOK_SECRET
-        generateValue: true
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
       - key: OPENROUTER_IMAGE_MODEL
         value: google/gemini-3-pro-image
-      - key: DEFAULT_ASPECT_RATIO
-        value: 1:1
-      - key: DEFAULT_RESOLUTION
-        value: 1K
-      - key: MAX_PROMPT_LENGTH
-        value: 1500
+      - key: MAX_PARALLEL_GENERATIONS
+        value: "2"
+      - key: MAX_PROMPT_CHARS
+        value: "1800"
+      - key: DB_PATH
+        value: bot_data.sqlite3

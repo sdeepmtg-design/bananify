@@ -1,115 +1,75 @@
 # Telegram Nano Banana Pro Bot
 
-Telegram-бот для генерации изображений через OpenRouter и модель Nano Banana Pro.
+Telegram-бот для генерации изображений через OpenRouter Image API и модель Nano Banana Pro.
 
-## Что внутри
+## Что умеет
 
-- FastAPI webhook-сервер
-- Генерация изображений через OpenRouter `/api/v1/images`
-- Отправка картинки пользователю в Telegram
-- Готовый `render.yaml` для деплоя на Render
-- Секреты через Environment Variables
-- Понятная обработка ошибок OpenRouter:
-  - недостаточно credits
-  - запрещённый prompt / `PROHIBITED_CONTENT`
-  - rate limit
-  - ошибки API-ключа
-  - временные ошибки провайдера
-- Проверка слишком длинных и пустых сообщений
+- Генерация изображений по текстовому описанию.
+- Редактирование/перегенерация по фото: пользователь отправляет фото с подписью, бот передает его как reference image.
+- Inline-кнопки: создание, редактирование, примеры, помощь.
+- Выбор формата: `1:1`, `9:16`, `16:9`, `3:4`, `4:3`.
+- Выбор количества изображений: 1–4.
+- Очередь генераций через `MAX_PARALLEL_GENERATIONS`.
+- Нормальная обработка ошибок OpenRouter: credits, prohibited content, rate limit, auth, timeout.
+- Админ-статистика через `/admin_stats` только для пользователей из `ADMIN_USER_IDS`.
+- Статистика хранится в SQLite. Изображения на диск не сохраняются.
 
 ## Переменные окружения
 
-На Render добавь:
+В Render → Environment добавь:
 
 ```env
-TELEGRAM_TOKEN=твой_telegram_bot_token
-OPENROUTER_API_KEY=твой_openrouter_key
-WEBHOOK_SECRET=любой_длинный_секрет
+TELEGRAM_TOKEN=your_telegram_bot_token
+OPENROUTER_API_KEY=your_openrouter_api_key
+WEBHOOK_SECRET=your_secret_webhook_path
+ADMIN_USER_IDS=123456789
 OPENROUTER_IMAGE_MODEL=google/gemini-3-pro-image
-DEFAULT_ASPECT_RATIO=1:1
-DEFAULT_RESOLUTION=1K
-MAX_PROMPT_LENGTH=1500
+MAX_PARALLEL_GENERATIONS=2
+MAX_PROMPT_CHARS=1800
+DB_PATH=bot_data.sqlite3
 ```
 
-Обязательные переменные:
+`ADMIN_USER_IDS` — это Telegram user ID админа. Можно указать несколько через запятую:
 
-- `TELEGRAM_TOKEN`
-- `OPENROUTER_API_KEY`
-- `WEBHOOK_SECRET`
+```env
+ADMIN_USER_IDS=111111111,222222222
+```
 
-Остальные можно не менять.
+## Render
 
-## Локальный запуск
+Build Command:
 
 ```bash
 pip install -r requirements.txt
-uvicorn main:app --reload
 ```
 
-Локально webhook Telegram без публичного URL работать не будет. Для тестов удобнее использовать Render или ngrok.
-
-## Деплой на Render
-
-1. Создай новый GitHub-репозиторий.
-2. Загрузи туда эти файлы.
-3. На Render выбери **New → Blueprint** или **New → Web Service**.
-4. Подключи GitHub-репозиторий.
-5. Добавь Environment Variables:
-   - `TELEGRAM_TOKEN`
-   - `OPENROUTER_API_KEY`
-   - `WEBHOOK_SECRET`
-   - `OPENROUTER_IMAGE_MODEL`
-   - `DEFAULT_ASPECT_RATIO`
-   - `DEFAULT_RESOLUTION`
-   - `MAX_PROMPT_LENGTH`
-6. Нажми Deploy.
-
-Если создаёшь обычный **Web Service** вручную:
+Start Command:
 
 ```bash
-# Build Command
-pip install -r requirements.txt
-
-# Start Command
 uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
 ## Установка webhook
 
-После деплоя Render даст URL вида:
+После деплоя открой в браузере:
 
 ```text
-https://your-app-name.onrender.com
+https://api.telegram.org/bot<TELEGRAM_TOKEN>/setWebhook?url=https://<RENDER_URL>/webhook/<WEBHOOK_SECRET>
 ```
 
-Открой в браузере:
+Проверка:
 
 ```text
-https://api.telegram.org/botTELEGRAM_TOKEN/setWebhook?url=https://your-app-name.onrender.com/webhook/WEBHOOK_SECRET
-```
-
-Замени:
-
-- `TELEGRAM_TOKEN` на токен Telegram-бота
-- `your-app-name` на имя сервиса Render
-- `WEBHOOK_SECRET` на твой секрет из Render
-
-Проверить webhook можно так:
-
-```text
-https://api.telegram.org/botTELEGRAM_TOKEN/getWebhookInfo
+https://api.telegram.org/bot<TELEGRAM_TOKEN>/getWebhookInfo
 ```
 
 ## Команды бота
 
-```text
-/start — приветствие
-/help — инструкция и пример prompt
-```
-
-Для генерации картинки просто отправь текстовое описание.
+- `/start` — главное меню
+- `/help` — помощь
+- `/examples` — примеры запросов
+- `/admin_stats` — статистика только для админа
 
 ## Важно
 
-Не коммить `.env`, Telegram token и OpenRouter key в GitHub.
-Все ключи храни только в Render → Environment Variables.
+Не коммить реальные ключи в GitHub. Используй только переменные окружения Render.

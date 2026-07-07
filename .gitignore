@@ -1,6 +1,8 @@
 .env
 __pycache__/
 *.pyc
+*.sqlite3
+bot_data.sqlite3
+.DS_Store
 .venv/
 venv/
-.DS_Store
