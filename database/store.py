@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from core.config import settings
+from models import get_model
 
 
 @contextmanager
@@ -34,13 +35,15 @@ def init_db() -> None:
                 image_count INTEGER NOT NULL DEFAULT 1,
                 last_prompt TEXT,
                 credits INTEGER NOT NULL DEFAULT 0,
-                free_used INTEGER NOT NULL DEFAULT 0
+                free_used INTEGER NOT NULL DEFAULT 0,
+                model_key TEXT NOT NULL DEFAULT 'pro'
             )
             """
         )
         for column, ddl in [
             ("credits", "ALTER TABLE users ADD COLUMN credits INTEGER NOT NULL DEFAULT 0"),
             ("free_used", "ALTER TABLE users ADD COLUMN free_used INTEGER NOT NULL DEFAULT 0"),
+            ("model_key", "ALTER TABLE users ADD COLUMN model_key TEXT NOT NULL DEFAULT 'pro'"),
         ]:
             if not _column_exists(conn, "users", column):
                 conn.execute(ddl)
@@ -115,17 +118,19 @@ def add_credits(user_id: int, credits: int) -> None:
         conn.execute("UPDATE users SET credits = credits + ? WHERE user_id = ?", (int(credits), user_id))
 
 
-def consume_generation_credits(user_id: int, image_count: int) -> tuple[bool, str, str]:
+def consume_generation_credits(user_id: int, image_count: int, credit_cost: int = 1) -> tuple[bool, str, str]:
     """Returns (ok, charge_type, message). charge_type: paid, free, none."""
     touch_user(user_id)
     image_count = max(1, int(image_count))
+    credit_cost = max(1, int(credit_cost))
+    required_credits = image_count * credit_cost
     with connect() as conn:
         row = conn.execute("SELECT credits, free_used FROM users WHERE user_id = ?", (user_id,)).fetchone()
         credits = int(row["credits"] or 0)
         free_used = int(row["free_used"] or 0)
 
-        if credits >= image_count:
-            conn.execute("UPDATE users SET credits = credits - ? WHERE user_id = ?", (image_count, user_id))
+        if credits >= required_credits:
+            conn.execute("UPDATE users SET credits = credits - ? WHERE user_id = ?", (required_credits, user_id))
             return True, "paid", ""
 
         if not free_used and image_count == 1:
@@ -148,9 +153,9 @@ def consume_generation_credits(user_id: int, image_count: int) -> tuple[bool, st
     )
 
 
-def refund_generation_credits(user_id: int, image_count: int, charge_type: str) -> None:
+def refund_generation_credits(user_id: int, image_count: int, charge_type: str, credit_cost: int = 1) -> None:
     if charge_type == "paid":
-        add_credits(user_id, image_count)
+        add_credits(user_id, max(1, int(image_count)) * max(1, int(credit_cost)))
     elif charge_type == "free":
         with connect() as conn:
             conn.execute("UPDATE users SET free_used = 0 WHERE user_id = ?", (user_id,))
@@ -195,6 +200,12 @@ def set_image_count(user_id: int, image_count: int) -> None:
     touch_user(user_id)
     with connect() as conn:
         conn.execute("UPDATE users SET image_count = ? WHERE user_id = ?", (image_count, user_id))
+
+
+def set_model_key(user_id: int, model_key: str) -> None:
+    touch_user(user_id)
+    with connect() as conn:
+        conn.execute("UPDATE users SET model_key = ? WHERE user_id = ?", (model_key, user_id))
 
 
 def set_last_prompt(user_id: int, prompt: str) -> None:

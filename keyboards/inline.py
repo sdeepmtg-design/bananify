@@ -10,8 +10,11 @@ def main_menu_keyboard() -> dict:
                 {"text": "🔢 Количество", "callback_data": "settings:n"},
             ],
             [
-                {"text": "💳 Купить изображения", "callback_data": "menu:buy"},
+                {"text": "🤖 Модель", "callback_data": "settings:model"},
                 {"text": "👤 Профиль", "callback_data": "menu:profile"},
+            ],
+            [
+                {"text": "💳 Купить кредиты", "callback_data": "menu:buy"},
             ],
             [
                 {"text": "💡 Примеры", "callback_data": "menu:examples"},
@@ -46,12 +49,28 @@ def count_keyboard(current: int = 1) -> dict:
     return {"inline_keyboard": rows}
 
 
+
+
 def buy_keyboard() -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "10 изображений — 600 ⭐", "callback_data": "buy:pack_10"}],
-            [{"text": "30 изображений — 1500 ⭐", "callback_data": "buy:pack_30"}],
-            [{"text": "100 изображений — 4000 ⭐", "callback_data": "buy:pack_100"}],
+            [{"text": "🟢 Start — 10 кредитов / 300 ⭐", "callback_data": "buy:start"}],
+            [{"text": "🔥 Plus — 50 кредитов / 1350 ⭐", "callback_data": "buy:plus"}],
+            [{"text": "💎 PRO — 100 кредитов / 2500 ⭐", "callback_data": "buy:pro"}],
             [{"text": "⬅️ Назад", "callback_data": "menu:main"}],
         ]
     }
+
+
+def model_keyboard(current: str = "pro") -> dict:
+    from models import IMAGE_MODELS
+
+    rows = []
+    for key, model in IMAGE_MODELS.items():
+        prefix = "✅ " if current == key else ""
+        rows.append([{
+            "text": f"{prefix}{model.title} — {model.credit_cost} кредит",
+            "callback_data": f"model:{key}",
+        }])
+    rows.append([{"text": "⬅️ Назад", "callback_data": "menu:main"}])
+    return {"inline_keyboard": rows}

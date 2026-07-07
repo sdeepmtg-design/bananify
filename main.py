@@ -16,11 +16,13 @@ from database.store import (
     refund_generation_credits,
     set_aspect_ratio,
     set_image_count,
+    set_model_key,
     set_last_prompt,
     touch_user,
     user_balance_text,
 )
-from keyboards.inline import aspect_keyboard, buy_keyboard, count_keyboard, main_menu_keyboard
+from keyboards.inline import aspect_keyboard, buy_keyboard, count_keyboard, main_menu_keyboard, model_keyboard
+from models import get_model
 from payments import get_package
 from services.openrouter import generate_images, user_friendly_error
 from services.telegram import (
@@ -137,6 +139,26 @@ async def handle_callback(callback: dict[str, Any]) -> None:
             await asyncio.to_thread(send_message, settings.telegram_token, chat_id, user_balance_text(user_id), main_menu_keyboard())
         elif data == "menu:buy":
             await asyncio.to_thread(send_message, settings.telegram_token, chat_id, buy_text(), buy_keyboard())
+        elif data in {"settings:model", "menu:model"}:
+            await asyncio.to_thread(
+                send_message,
+                settings.telegram_token,
+                chat_id,
+                model_text(user_settings),
+                model_keyboard(user_settings.get("model_key", "pro")),
+            )
+        elif data.startswith("model:"):
+            model_key = data.split(":", 1)[1]
+            selected_model = get_model(model_key)
+            set_model_key(user_id, model_key)
+            updated_settings = get_user_settings(user_id)
+            await asyncio.to_thread(
+                send_message,
+                settings.telegram_token,
+                chat_id,
+                f"✅ Модель выбрана: {selected_model.short_title}\n\n" + start_text(updated_settings),
+                main_menu_keyboard(),
+            )
         elif data.startswith("buy:"):
             package_id = data.split(":", 1)[1]
             package = get_package(package_id)
@@ -285,9 +307,11 @@ async def process_generation(chat_id: int, user_id: int, prompt: str, reference_
     user_settings = get_user_settings(user_id)
     aspect_ratio = user_settings["aspect_ratio"]
     image_count = int(user_settings["image_count"])
+    selected_model = get_model(user_settings.get("model_key"))
+    credit_cost = selected_model.credit_cost
     set_last_prompt(user_id, prompt)
 
-    ok, charge_type, balance_message = consume_generation_credits(user_id, image_count)
+    ok, charge_type, balance_message = consume_generation_credits(user_id, image_count, credit_cost)
     if not ok:
         await asyncio.to_thread(send_message, settings.telegram_token, chat_id, balance_message, buy_keyboard())
         return
@@ -296,7 +320,7 @@ async def process_generation(chat_id: int, user_id: int, prompt: str, reference_
         send_message,
         settings.telegram_token,
         chat_id,
-        f"⏳ Генерирую...\nФормат: {aspect_ratio}\nКоличество: {image_count}\n\nЗапросы обрабатываются по очереди.",
+        f"⏳ Генерирую...\nМодель: {selected_model.short_title}\nФормат: {aspect_ratio}\nКоличество: {image_count}\nСписано кредитов: {image_count * credit_cost}\n\nЗапросы обрабатываются по очереди.",
     )
 
     started_at = time.monotonic()
@@ -307,7 +331,7 @@ async def process_generation(chat_id: int, user_id: int, prompt: str, reference_
                 generate_images,
                 settings.openrouter_api_key,
                 prompt,
-                settings.openrouter_model,
+                selected_model.model_id,
                 aspect_ratio,
                 "1K",
                 image_count,
@@ -341,7 +365,7 @@ async def process_generation(chat_id: int, user_id: int, prompt: str, reference_
                 duration_ms=duration_ms,
                 error_code=error_code,
             )
-            refund_generation_credits(user_id, image_count, charge_type)
+            refund_generation_credits(user_id, image_count, charge_type, credit_cost)
             await asyncio.to_thread(send_message, settings.telegram_token, chat_id, message)
 
 
@@ -378,7 +402,7 @@ async def handle_successful_payment(chat_id: int, user_id: int, payment: dict[st
         send_message,
         settings.telegram_token,
         chat_id,
-        f"✅ Оплата прошла!\nНачислено: {package.credits} изображений.\n\n" + user_balance_text(user_id),
+        f"✅ Оплата прошла!\nНачислено: {package.credits} AI-кредитов.\n\n" + user_balance_text(user_id),
         main_menu_keyboard(),
     )
 
@@ -401,7 +425,7 @@ async def handle_admin_stats(chat_id: int, user_id: int) -> None:
         f"🎁 Использовали бесплатную генерацию: {stats['free_used']}\n"
         f"👥 Покупателей: {stats['buyers']}\n"
         f"⭐ Получено Stars: {stats['total_stars']}\n"
-        f"💎 Продано изображений: {stats['total_paid_credits']}\n"
+        f"💎 Продано кредитов: {stats['total_paid_credits']}\n"
         f"⏱ Среднее время: {stats['avg_ms'] // 1000} сек.\n\n"
         f"Последние ошибки:\n{error_text}"
     )
@@ -412,9 +436,9 @@ def start_text(user_settings: dict[str, Any]) -> str:
     free_line = "доступна" if not int(user_settings.get("free_used") or 0) else "использована"
     return (
         "🍌 Привет! Я создаю изображения через Nano Banana Pro.\n\n"
-        "🎁 Новым пользователям доступна 1 бесплатная генерация. После этого можно купить пакет изображений за Telegram Stars.\n\n"
+        "🎁 Новым пользователям доступна 1 бесплатная генерация. После этого можно купить AI-кредиты за Telegram Stars.\n\n"
         "Просто напиши, что нужно нарисовать. Также можешь отправить фото с подписью — я попробую его отредактировать.\n\n"
-        f"Текущие настройки:\n📐 Формат: {user_settings['aspect_ratio']}\n🔢 Количество: {user_settings['image_count']}\n🎁 Бесплатная: {free_line}\n💎 Баланс: {int(user_settings.get('credits') or 0)}"
+        f"Текущие настройки:\n🤖 Модель: {get_model(user_settings.get('model_key')).short_title}\n📐 Формат: {user_settings['aspect_ratio']}\n🔢 Количество: {user_settings['image_count']}\n🎁 Бесплатная: {free_line}\n💎 Баланс: {int(user_settings.get('credits') or 0)} кредитов"
     )
 
 
@@ -423,8 +447,8 @@ def help_text() -> str:
         "ℹ️ Как пользоваться ботом:\n\n"
         "1. Напиши описание картинки — бот создаст изображение.\n"
         "2. Отправь фото с подписью — бот попробует отредактировать фото по описанию.\n"
-        "3. Через кнопки можно выбрать формат и количество изображений.\n\n"
-        "Команды:\n/start — главное меню\n/help — помощь\n/examples — примеры\n/balance — баланс\n/buy — купить изображения\n/paysupport — поддержка платежей"
+        "3. Через кнопки можно выбрать модель, формат и количество изображений.\n\n"
+        "Команды:\n/start — главное меню\n/help — помощь\n/examples — примеры\n/balance — баланс\n/buy — купить кредиты\n/paysupport — поддержка платежей"
     )
 
 
@@ -442,9 +466,24 @@ def examples_text() -> str:
 
 def buy_text() -> str:
     return (
-        "💳 Купить изображения\n\n"
-        "1 изображение = 1 кредит. Если выбрано 4 изображения, спишется 4 кредита.\n\n"
-        "Выбери пакет:"
+        "💳 Купить AI-кредиты\n\n"
+        "1 кредит = 1 генерация или редактирование изображения.\n"
+        "Если выбрано 4 изображения, спишется 4 кредита.\n\n"
+        "Пакеты:\n"
+        "🟢 Start — 10 кредитов / 300 ⭐\n"
+        "🔥 Plus — 50 кредитов / 1350 ⭐\n"
+        "💎 PRO — 100 кредитов / 2500 ⭐"
+    )
+
+
+def model_text(user_settings: dict[str, Any]) -> str:
+    current = get_model(user_settings.get("model_key"))
+    return (
+        "🤖 Выбор модели\n\n"
+        f"Сейчас выбрано: {current.title}\n"
+        f"Стоимость: {current.credit_cost} кредит за изображение\n\n"
+        "Можно переключаться между моделями через один OpenRouter API-ключ. "
+        "Если какая-то модель временно недоступна у провайдера, выбери другую."
     )
 
 
